@@ -1,0 +1,8 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "contractName": "CharityDonationRegistry",
+  "contractAddress": "0x4E78fE4c5fC998a9b4EeAfb324206D8b80Ab0828",
+  "deployer": "0xBBff257719229A475467B2aF357fAc803450669d",
+  "deployedAt": "2026-03-24T06:22:58.200Z"
+}

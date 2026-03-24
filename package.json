@@ -1,0 +1,28 @@
+{
+  "name": "charity-donation-chain-system",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "contracts",
+    "server",
+    "web"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "demo": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "chain:backfill": "npm run chain:backfill --workspace server",
+    "db:up": "docker-compose up -d mysql",
+    "db:down": "docker-compose down",
+    "db:logs": "docker-compose logs -f mysql",
+    "db:init": "npm run db:init --workspace server",
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "build:web": "npm run build --workspace web",
+    "test:contracts": "npm run test --workspace contracts",
+    "test:server": "npm run test --workspace server"
+  }
+}
