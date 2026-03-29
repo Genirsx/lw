@@ -171,6 +171,7 @@ async function ensureDisbursementProof({ disbursementId, projectId, recordHash, 
 }
 
 module.exports = {
+  getProvider,
   registerProject,
   updateProjectHash,
   syncProjectProof,

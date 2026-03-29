@@ -1,5 +1,27 @@
 const API_BASE = "";
 
+const STATUS_LABELS = {
+  pending: "待处理",
+  approved: "已通过",
+  rejected: "已驳回",
+  success: "已上链",
+  failed: "失败",
+  active: "进行中",
+  draft: "草稿",
+  closed: "已结束"
+};
+
+const STATUS_TONES = {
+  pending: "status-pending",
+  approved: "status-approved",
+  rejected: "status-rejected",
+  success: "status-approved",
+  failed: "status-rejected",
+  active: "status-approved",
+  draft: "status-muted",
+  closed: "status-muted"
+};
+
 export async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("charity-token");
   const headers = {
@@ -51,4 +73,16 @@ export function truncateHash(value, size = 12) {
   }
 
   return `${value.slice(0, size)}...${value.slice(-6)}`;
+}
+
+export function buildTransactionPath(txHash) {
+  return `/transactions/${txHash}`;
+}
+
+export function getStatusLabel(value) {
+  return STATUS_LABELS[value] || value || "-";
+}
+
+export function getStatusTone(value) {
+  return STATUS_TONES[value] || "status-muted";
 }

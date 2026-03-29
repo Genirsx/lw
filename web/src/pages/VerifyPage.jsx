@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { apiFetch, truncateHash } from "../api/client";
+import { Link, useSearchParams } from "react-router-dom";
+import { apiFetch, buildTransactionPath, truncateHash } from "../api/client";
 
 export default function VerifyPage() {
   const [searchParams] = useSearchParams();
@@ -92,12 +92,12 @@ export default function VerifyPage() {
             <p>链上哈希: {result.onChainHash || "无"}</p>
             <p>
               交易哈希:{" "}
-              {result.explorerTxUrl ? (
-                <a href={result.explorerTxUrl} target="_blank" rel="noreferrer">
+              {result.txHash ? (
+                <Link to={buildTransactionPath(result.txHash)}>
                   {truncateHash(result.txHash, 14)}
-                </a>
+                </Link>
               ) : (
-                result.txHash || "无"
+                "无"
               )}
             </p>
           </div>

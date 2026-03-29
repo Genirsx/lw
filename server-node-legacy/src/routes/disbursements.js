@@ -193,7 +193,7 @@ router.get(
     });
 
     const calculatedOk = verifyHash(payload, record.record_hash);
-    let onChainHash = chainRecord ? chainRecord.record_hash : null;
+    let onChainHash = env.chainMode === "mock" && chainRecord ? chainRecord.record_hash : null;
 
     if (env.chainMode !== "mock" && record.chain_status === "success") {
       try {

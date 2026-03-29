@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { apiFetch, formatMoney, formatDate } from "../api/client";
+import { Link, useParams } from "react-router-dom";
+import { apiFetch, buildTransactionPath, formatMoney, formatDate, getStatusLabel, getStatusTone, truncateHash } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 
 export default function ProjectDetailPage() {
@@ -56,6 +56,7 @@ export default function ProjectDetailPage() {
   const { project, donations, disbursements } = data;
   const progress = Math.min(100, Math.round((project.raised_amount / project.target_amount) * 100));
   const donationDisabled = project.status !== "active";
+  const remainingAmount = Math.max(0, Number(project.target_amount || 0) - Number(project.raised_amount || 0));
 
   return (
     <div className="page-grid">
@@ -63,9 +64,9 @@ export default function ProjectDetailPage() {
         <div className="detail-header">
           <div>
             <div className="tag-row">
-              <span className="tag">{project.status}</span>
-              <span className={`tag ${project.chain_status === "success" ? "tag-success" : ""}`}>
-                {project.chain_status}
+              <span className={`tag ${getStatusTone(project.status)}`}>{getStatusLabel(project.status)}</span>
+              <span className={`tag ${getStatusTone(project.chain_status)}`}>
+                {getStatusLabel(project.chain_status)}
               </span>
             </div>
             <h2>{project.name}</h2>
@@ -80,6 +81,12 @@ export default function ProjectDetailPage() {
         </div>
         <div className="progress-bar large-progress">
           <span style={{ width: `${progress}%` }} />
+        </div>
+        <div className="status-legend">
+          <span><strong>状态说明：</strong></span>
+          <span>进行中：项目当前可接受捐赠</span>
+          <span>已通过：项目已审核通过并公开展示</span>
+          <span>已上链：项目记录已成功写入链上</span>
         </div>
         <div className="info-grid">
           <div>
@@ -96,7 +103,11 @@ export default function ProjectDetailPage() {
           </div>
           <div>
             <span>项目哈希</span>
-            <strong className="mono-text">{project.chain_hash ? `${project.chain_hash.slice(0, 18)}...` : "-"}</strong>
+            <strong className="mono-text">{project.chain_hash ? truncateHash(project.chain_hash, 10) : "-"}</strong>
+          </div>
+          <div>
+            <span>待筹金额</span>
+            <strong>{formatMoney(remainingAmount)}</strong>
           </div>
         </div>
         {donationDisabled ? <div className="alert">当前项目状态为 `{project.status}`，暂不接受新的捐赠。</div> : null}
@@ -154,8 +165,44 @@ export default function ProjectDetailPage() {
             </button>
           </form>
         ) : (
-          <div className="alert">登录后可提交捐赠。</div>
+          <div className="record-list">
+            <div className="alert">登录后可提交捐赠。</div>
+            <Link className="primary-button" to="/login">
+              前往登录
+            </Link>
+          </div>
         )}
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <h3>链上状态</h3>
+          <p>展示当前项目的链上存证状态和最近交易。</p>
+        </div>
+        <div className="record-list">
+          <div className="record-item stacked-item">
+            <div>
+              <strong>链上状态</strong>
+              <p>{getStatusLabel(project.chain_status)}</p>
+            </div>
+            <div className="action-row">
+              <span className={`tag ${getStatusTone(project.chain_status)}`}>{getStatusLabel(project.chain_status)}</span>
+            </div>
+          </div>
+          {project.chain_tx_hash ? (
+            <div className="record-item stacked-item">
+              <div>
+                <strong>最近项目交易</strong>
+                <p className="hash-wrap">{project.chain_tx_hash}</p>
+              </div>
+              <div>
+                <Link className="ghost-button" to={buildTransactionPath(project.chain_tx_hash)}>
+                  查看交易详情
+                </Link>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="panel">
@@ -164,19 +211,19 @@ export default function ProjectDetailPage() {
         </div>
         <div className="record-list">
           {donations.map((item) => (
-            <div className="record-item" key={item.id}>
+            <div className="record-item stacked-item" key={item.id}>
               <div>
                 <strong>{item.is_anonymous ? "匿名捐赠者" : item.donor_name}</strong>
                 <p>{item.message || "无留言"}</p>
               </div>
-              <div>
+              <div className="action-row">
                 <strong>{formatMoney(item.amount)}</strong>
-                <p>
-                  {formatDate(item.donated_at)} / {item.chain_status}
-                </p>
+                <span className={`tag ${getStatusTone(item.chain_status)}`}>{getStatusLabel(item.chain_status)}</span>
+                <p>{formatDate(item.donated_at)}</p>
               </div>
             </div>
           ))}
+          {!donations.length ? <div className="alert">暂无捐赠记录。</div> : null}
         </div>
       </section>
 
@@ -193,11 +240,12 @@ export default function ProjectDetailPage() {
                 <p>接收方：{item.receiver}</p>
                 <p>{item.description || "无补充说明"}</p>
                 <small>
-                  {formatDate(item.occurred_at)} / {formatMoney(item.amount)} / {item.chain_status}
+                  {formatDate(item.occurred_at)} / {formatMoney(item.amount)} / {getStatusLabel(item.chain_status)}
                 </small>
               </div>
             </div>
           ))}
+          {!disbursements.length ? <div className="alert">暂无资金流向记录。</div> : null}
         </div>
       </section>
     </div>

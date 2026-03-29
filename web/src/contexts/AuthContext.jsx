@@ -34,10 +34,10 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
-  const register = async (username, email, password) =>
+  const register = async (username, email, password, role = "user") =>
     apiFetch("/api/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username, email, password })
+      body: JSON.stringify({ username, email, password, role })
     });
 
   const logout = () => {

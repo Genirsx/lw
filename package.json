@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "workspaces": [
     "contracts",
-    "server",
     "web"
   ],
   "devDependencies": {
@@ -14,15 +13,15 @@
     "install:all": "npm install --workspaces",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
     "demo": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
-    "chain:backfill": "npm run chain:backfill --workspace server",
+    "chain:backfill": "node -e \"console.log('Go server does not include Node backfill script. Use server-node-legacy/scripts/backfillSepolia.js if you still need the legacy flow.')\"",
     "db:up": "docker-compose up -d mysql",
     "db:down": "docker-compose down",
     "db:logs": "docker-compose logs -f mysql",
-    "db:init": "npm run db:init --workspace server",
-    "dev:server": "npm run dev --workspace server",
+    "db:init": "node -e \"console.log('Go server reuses SQLite at server/data/app.db. No Node db:init step is required.')\"",
+    "dev:server": "cd server && go run ./cmd/api",
     "dev:web": "npm run dev --workspace web",
     "build:web": "npm run build --workspace web",
     "test:contracts": "npm run test --workspace contracts",
-    "test:server": "npm run test --workspace server"
+    "test:server": "cd server && go test ./..."
   }
 }

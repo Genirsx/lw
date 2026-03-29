@@ -1,5 +1,7 @@
 const express = require("express");
 const db = require("../db");
+const { ethers } = require("ethers");
+const env = require("../config/env");
 const chainService = require("../services/chainService");
 const { authenticate, requireAdmin } = require("../middleware/auth");
 const { recordOperation } = require("../services/logService");
@@ -11,6 +13,117 @@ const { success, fail } = require("../utils/response");
 
 const router = express.Router();
 
+function normalizeBigInt(value) {
+  return typeof value === "bigint" ? value.toString() : value;
+}
+
+function serializeLog(log) {
+  return {
+    address: log.address,
+    topics: log.topics,
+    data: log.data,
+    index: log.index,
+    transactionIndex: log.transactionIndex,
+    blockNumber: log.blockNumber,
+    transactionHash: log.transactionHash,
+    removed: log.removed
+  };
+}
+
+async function buildTransactionDetail(txHash) {
+  const relatedRecord = await db.queryOne(
+    `
+      SELECT *
+      FROM chain_records
+      WHERE tx_hash = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [txHash]
+  );
+
+  if (env.chainMode === "mock") {
+    if (!relatedRecord) {
+      return null;
+    }
+
+    return {
+      txHash,
+      chainMode: env.chainMode,
+      explorerTxUrl: buildExplorerTxUrl(txHash),
+      relatedRecord,
+      transaction: null,
+      receipt: null,
+      block: null
+    };
+  }
+
+  const provider = chainService.getProvider();
+  const [transaction, receipt] = await Promise.all([
+    provider.getTransaction(txHash),
+    provider.getTransactionReceipt(txHash)
+  ]);
+
+  if (!transaction && !receipt && !relatedRecord) {
+    return null;
+  }
+
+  const blockNumber = receipt?.blockNumber ?? transaction?.blockNumber ?? relatedRecord?.block_number ?? null;
+  const block = blockNumber != null ? await provider.getBlock(blockNumber) : null;
+
+  return {
+    txHash,
+    chainMode: env.chainMode,
+    explorerTxUrl: buildExplorerTxUrl(txHash),
+    relatedRecord,
+    transaction: transaction
+      ? {
+          hash: transaction.hash,
+          blockNumber: transaction.blockNumber,
+          from: transaction.from,
+          to: transaction.to,
+          nonce: transaction.nonce,
+          type: transaction.type,
+          chainId: normalizeBigInt(transaction.chainId),
+          gasLimit: normalizeBigInt(transaction.gasLimit),
+          gasPrice: normalizeBigInt(transaction.gasPrice),
+          maxFeePerGas: normalizeBigInt(transaction.maxFeePerGas),
+          maxPriorityFeePerGas: normalizeBigInt(transaction.maxPriorityFeePerGas),
+          value: normalizeBigInt(transaction.value),
+          data: transaction.data
+        }
+      : null,
+    receipt: receipt
+      ? {
+          hash: receipt.hash,
+          status: receipt.status === 1 ? "success" : "failed",
+          blockNumber: receipt.blockNumber,
+          from: receipt.from,
+          to: receipt.to,
+          contractAddress: receipt.contractAddress,
+          gasUsed: normalizeBigInt(receipt.gasUsed),
+          cumulativeGasUsed: normalizeBigInt(receipt.cumulativeGasUsed),
+          effectiveGasPrice: normalizeBigInt(receipt.effectiveGasPrice),
+          logsBloom: receipt.logsBloom,
+          logs: receipt.logs.map(serializeLog)
+        }
+      : null,
+    block: block
+      ? {
+          number: block.number,
+          hash: block.hash,
+          parentHash: block.parentHash,
+          timestamp: block.timestamp,
+          timestampIso: new Date(Number(block.timestamp) * 1000).toISOString(),
+          miner: block.miner,
+          gasLimit: normalizeBigInt(block.gasLimit),
+          gasUsed: normalizeBigInt(block.gasUsed),
+          baseFeePerGas: normalizeBigInt(block.baseFeePerGas)
+        }
+      : null
+  };
+}
+
 function buildProjectPayloadForRow(project) {
   return buildProjectPayload({
     projectId: project.id,
@@ -20,6 +133,17 @@ function buildProjectPayloadForRow(project) {
     endTime: new Date(project.end_time).toISOString(),
     status: project.status
   });
+}
+
+function buildLatestRecordsFromClause() {
+  return `
+    FROM chain_records cr
+    INNER JOIN (
+      SELECT business_type, business_id, MAX(id) AS latest_id
+      FROM chain_records
+      GROUP BY business_type, business_id
+    ) latest ON latest.latest_id = cr.id
+  `;
 }
 
 router.get(
@@ -41,12 +165,13 @@ router.get(
     }
 
     const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const fromSql = buildLatestRecordsFromClause();
     const items = await db.query(
       `
-        SELECT *
-        FROM chain_records
+        SELECT cr.*
+        ${fromSql}
         ${whereSql}
-        ORDER BY created_at DESC
+        ORDER BY cr.created_at DESC
         LIMIT ? OFFSET ?
       `,
       [...params, pageSize, offset]
@@ -55,7 +180,14 @@ router.get(
       ...item,
       explorerTxUrl: buildExplorerTxUrl(item.tx_hash)
     }));
-    const totalRow = await db.queryOne(`SELECT COUNT(*) AS total FROM chain_records ${whereSql}`, params);
+    const totalRow = await db.queryOne(
+      `
+        SELECT COUNT(*) AS total
+        ${fromSql}
+        ${whereSql}
+      `,
+      params
+    );
 
     return success(res, buildPaginatedResult(enrichedItems, totalRow.total, page, pageSize));
   })
@@ -78,17 +210,27 @@ router.get(
       "SELECT COUNT(*) AS donation_count, COALESCE(SUM(amount), 0) AS total_donation_amount FROM donations"
     );
 
+    const latestRecordsFromSql = buildLatestRecordsFromClause();
     const chainStats = await db.queryOne(
       `
         SELECT
           COUNT(*) AS total_records,
-          SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
-          SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END) AS failed_count
-        FROM chain_records
+          SUM(CASE WHEN cr.status = 'success' THEN 1 ELSE 0 END) AS success_count,
+          SUM(CASE WHEN cr.status != 'success' THEN 1 ELSE 0 END) AS failed_count
+        ${latestRecordsFromSql}
       `
     );
 
-    const recentRecords = (await db.query("SELECT * FROM chain_records ORDER BY created_at DESC LIMIT 6")).map((item) => ({
+    const recentRecords = (
+      await db.query(
+        `
+          SELECT cr.*
+          ${latestRecordsFromSql}
+          ORDER BY cr.created_at DESC
+          LIMIT 6
+        `
+      )
+    ).map((item) => ({
       ...item,
       explorerTxUrl: buildExplorerTxUrl(item.tx_hash)
     }));
@@ -99,6 +241,26 @@ router.get(
       ...chainStats,
       ...getPublicChainConfig(),
       recentRecords
+    });
+  })
+);
+
+router.get(
+  "/tx/:txHash",
+  asyncHandler(async (req, res) => {
+    const txHash = String(req.params.txHash || "").trim();
+    if (!ethers.isHexString(txHash, 32)) {
+      return fail(res, 400, "交易哈希格式不正确");
+    }
+
+    const detail = await buildTransactionDetail(txHash);
+    if (!detail) {
+      return fail(res, 404, "未找到对应交易");
+    }
+
+    return success(res, {
+      ...detail,
+      ...getPublicChainConfig()
     });
   })
 );

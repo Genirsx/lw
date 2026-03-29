@@ -1,48 +1,61 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiFetch, formatMoney, formatDate, truncateHash } from "../api/client";
+import { apiFetch, formatMoney, getStatusLabel } from "../api/client";
+import { useAuth } from "../contexts/AuthContext";
 
-export default function HomePage() {
-  const [summary, setSummary] = useState(null);
-  const [projects, setProjects] = useState([]);
-  const [error, setError] = useState("");
+function WorkspaceIntro({ eyebrow, title, description, children }) {
+  return (
+    <section className="workspace-hero">
+      <div className="workspace-copy">
+        <p className="eyebrow">{eyebrow}</p>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      <div className="workspace-actions">{children}</div>
+    </section>
+  );
+}
 
-  useEffect(() => {
-    Promise.all([apiFetch("/api/chain/summary"), apiFetch("/api/projects")])
-      .then(([summaryData, projectData]) => {
-        setSummary(summaryData);
-        setProjects(projectData);
-      })
-      .catch((err) => setError(err.message));
-  }, []);
+function NavList({ items }) {
+  return (
+    <div className="list-shell">
+      {items.map((item) => (
+        <div className="list-row" key={item.title}>
+          <div>
+            <strong>{item.title}</strong>
+            <p>{item.description}</p>
+          </div>
+          <div className="button-row">
+            {item.secondaryTo ? (
+              <Link className="ghost-button" to={item.secondaryTo}>
+                {item.secondaryLabel}
+              </Link>
+            ) : null}
+            <Link className="primary-button" to={item.to}>
+              {item.label}
+            </Link>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
+function GuestHome({ summary, error }) {
   return (
     <div className="page-grid">
-      <section className="hero-panel">
-        <div className="hero-copy">
-          <p className="eyebrow">可信记录 / 公开验证 / 资金可追溯</p>
-          <h2>让公益项目的每笔关键记录都可查询、可验证、可追踪。</h2>
-          <p>
-            本系统将项目发布、捐赠存证、拨付流向和链上校验统一到一个 Web
-            平台，适合毕业设计演示与论文实现。
-          </p>
+      <section className="workspace-hero">
+        <div className="workspace-copy">
+          <p className="eyebrow">Guest View</p>
+          <h2>先看系统，再决定你要用哪个角色进入。</h2>
+          <p>首页只保留总览和公开入口，不再做大面积卡片堆叠。</p>
         </div>
-        <div className="hero-metrics">
-          <div className="metric-card accent-card">
-            <span>累计捐赠</span>
-            <strong>{summary ? formatMoney(summary.total_donation_amount) : "--"}</strong>
-          </div>
-          <div className="metric-card">
-            <span>公益项目</span>
-            <strong>{summary?.project_count ?? "--"}</strong>
-          </div>
-          <div className="metric-card">
-            <span>存证记录</span>
-            <strong>{summary?.total_records ?? "--"}</strong>
-          </div>
-          <div className="metric-card">
-            <span>当前网络</span>
-            <strong>{summary?.chainMode ?? "--"}</strong>
+        <div className="workspace-actions">
+          <div className="summary-list">
+            <div><span>累计捐赠</span><strong>{summary ? formatMoney(summary.total_donation_amount) : "--"}</strong></div>
+            <div><span>公益项目</span><strong>{summary?.project_count ?? "--"}</strong></div>
+            <div><span>存证记录</span><strong>{summary?.total_records ?? "--"}</strong></div>
+            <div><span>当前网络</span><strong>{summary?.chainMode ?? "--"}</strong></div>
           </div>
         </div>
       </section>
@@ -51,92 +64,225 @@ export default function HomePage() {
 
       <section className="panel">
         <div className="section-head">
-          <h3>公益项目</h3>
-          <p>展示项目概况、筹款进度、拨付情况与最新链上状态。</p>
+          <h3>公开入口</h3>
+          <p>游客只看项目、链记录、校验和登录入口。</p>
         </div>
-        <div className="card-grid">
-          {projects.map((project) => {
-            const progress = Math.min(
-              100,
-              project.target_amount ? Math.round((project.raised_amount / project.target_amount) * 100) : 0
-            );
+        <NavList
+          items={[
+            { title: "项目大厅", description: "浏览已上线公益项目，查看筹款和拨付详情。", to: "/projects", label: "进入项目大厅" },
+            { title: "链记录", description: "查看最近存证记录，点击交易哈希进入详情页。", to: "/chain-records", label: "查看链记录" },
+            { title: "链上校验", description: "按记录编号验证链下哈希和链上哈希是否一致。", to: "/verify", label: "打开校验页" },
+            { title: "登录或注册", description: "登录后会根据角色切换到对应的工作首页。", to: "/login", label: "前往登录", secondaryTo: "/register", secondaryLabel: "新用户注册" }
+          ]}
+        />
+      </section>
+    </div>
+  );
+}
 
-            return (
-              <article className="project-card" key={project.id}>
-                <div
-                  className="project-cover"
-                  style={{ backgroundImage: `linear-gradient(135deg, rgba(9,31,44,.55), rgba(18,92,120,.15)), url(${project.image_url})` }}
-                />
-                <div className="project-body">
-                  <div className="tag-row">
-                    <span className="tag">{project.status}</span>
-                    <span className={`tag ${project.chain_status === "success" ? "tag-success" : ""}`}>
-                      {project.chain_status}
-                    </span>
-                  </div>
-                  <h4>{project.name}</h4>
-                  <p>{project.description}</p>
-                  <div className="progress-bar">
-                    <span style={{ width: `${progress}%` }} />
-                  </div>
-                  <div className="project-meta">
-                    <span>已筹 {formatMoney(project.raised_amount)}</span>
-                    <span>目标 {formatMoney(project.target_amount)}</span>
-                  </div>
-                  <div className="project-meta">
-                    <span>拨付 {formatMoney(project.disbursed_amount)}</span>
-                    <span>记录 {project.donation_count} 笔</span>
-                  </div>
-                  <div className="project-meta">
-                    <span>截止 {formatDate(project.end_time)}</span>
-                  </div>
-                  <Link className="primary-button" to={`/projects/${project.id}`}>
-                    查看详情
-                  </Link>
-                </div>
-              </article>
-            );
-          })}
+function DonorHome({ summary, myDonationData, error }) {
+  return (
+    <div className="page-grid">
+      <WorkspaceIntro
+        eyebrow="Donor Workspace"
+        title="你是捐赠者，先看我的记录，再决定继续支持哪个项目。"
+        description="首页只保留捐赠者最常用的入口，信息按列表分组展示。"
+      >
+        <div className="summary-list">
+          <div><span>系统累计捐赠</span><strong>{summary ? formatMoney(summary.total_donation_amount) : "--"}</strong></div>
+          <div><span>我的捐赠笔数</span><strong>{myDonationData?.pagination?.total ?? 0}</strong></div>
+          <div><span>公益项目</span><strong>{summary?.project_count ?? "--"}</strong></div>
+          <div><span>当前网络</span><strong>{summary?.chainMode ?? "--"}</strong></div>
         </div>
+      </WorkspaceIntro>
+
+      {error ? <div className="alert error">{error}</div> : null}
+
+      <section className="panel">
+        <div className="section-head">
+          <h3>我的常用页面</h3>
+        </div>
+        <NavList
+          items={[
+            { title: "我的捐赠", description: "查看我的捐赠记录，并快速跳转做链上校验。", to: "/my-donations", label: "查看我的捐赠" },
+            { title: "项目大厅", description: "浏览公开项目，选择想支持的公益项目继续捐赠。", to: "/projects", label: "去捐赠" },
+            { title: "链记录", description: "如果你想直接看交易和链记录，可以从这里进入。", to: "/chain-records", label: "查看链记录" }
+          ]}
+        />
       </section>
 
       <section className="panel">
         <div className="section-head">
-          <h3>最近链上存证</h3>
-          <p>展示最近写入链服务的关键业务记录。</p>
+          <h3>最近捐赠</h3>
         </div>
-        {summary ? (
-          <div className="network-banner">
-            <span>网络：{summary.chainName}</span>
-            <span>Chain ID：{summary.chainId}</span>
-            <span>币种：{summary.chainCurrencySymbol}</span>
-          </div>
-        ) : null}
-        <div className="record-list">
-          {summary?.recentRecords?.map((record) => (
-            <div className="record-item" key={record.id}>
+        <div className="list-shell">
+          {myDonationData?.items?.map((item) => (
+            <div className="list-row" key={item.id}>
               <div>
-                <strong>{record.business_type}</strong>
-                <p>ID #{record.business_id}</p>
+                <strong>{item.project_name}</strong>
+                <p>{item.message || "无留言"}</p>
               </div>
-              <div>
-                <span className={`tag ${record.status === "success" ? "tag-success" : ""}`}>{record.status}</span>
-                <p>
-                  {record.explorerTxUrl ? (
-                    <a href={record.explorerTxUrl} target="_blank" rel="noreferrer">
-                      {truncateHash(record.tx_hash)}
-                    </a>
-                  ) : record.tx_hash ? (
-                    truncateHash(record.tx_hash)
-                  ) : (
-                    "无交易哈希"
-                  )}
-                </p>
+              <div className="inline-meta">
+                <span>{formatMoney(item.amount)}</span>
+                <span>{item.chain_status}</span>
               </div>
             </div>
           ))}
+          {!myDonationData?.items?.length ? <div className="alert">你还没有捐赠记录。</div> : null}
         </div>
       </section>
     </div>
   );
+}
+
+function ApplicantHome({ applicationData, error }) {
+  const pendingCount = applicationData?.items?.filter((item) => item.approval_status === "pending").length ?? 0;
+  const approvedCount = applicationData?.items?.filter((item) => item.approval_status === "approved").length ?? 0;
+
+  return (
+    <div className="page-grid">
+      <WorkspaceIntro
+        eyebrow="Applicant Workspace"
+        title="你是项目申请者，先看审核状态和下一步动作。"
+        description="申请者首页只显示申请相关信息，并改用更克制的列表布局。"
+      >
+        <div className="summary-list">
+          <div><span>我的申请总数</span><strong>{applicationData?.pagination?.total ?? 0}</strong></div>
+          <div><span>待审核</span><strong>{pendingCount}</strong></div>
+          <div><span>已通过</span><strong>{approvedCount}</strong></div>
+          <div><span>最近状态</span><strong>{getStatusLabel(applicationData?.items?.[0]?.approval_status)}</strong></div>
+        </div>
+      </WorkspaceIntro>
+
+      {error ? <div className="alert error">{error}</div> : null}
+
+      <section className="panel">
+        <div className="section-head">
+          <h3>我的工作入口</h3>
+        </div>
+        <NavList
+          items={[
+            { title: "我的项目申请", description: "提交新项目申请，查看审核意见和上线结果。", to: "/my-project-applications", label: "进入申请页" },
+            { title: "已上线项目", description: "查看已审核上线的项目展示效果，方便对照自己的申请结果。", to: "/projects", label: "查看项目大厅" },
+            { title: "链记录", description: "如果你的项目已通过并有链上交易，可以从这里查看。", to: "/chain-records", label: "查看链记录" }
+          ]}
+        />
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <h3>最近申请</h3>
+        </div>
+        <div className="list-shell">
+          {applicationData?.items?.map((project) => (
+            <div className="list-row" key={project.id}>
+              <div>
+                <strong>{project.name}</strong>
+                <p>{project.review_note || "管理员暂未留下审核意见"}</p>
+              </div>
+              <div className="inline-meta">
+                <span>{getStatusLabel(project.approval_status)}</span>
+                <span>{getStatusLabel(project.status)}</span>
+              </div>
+            </div>
+          ))}
+          {!applicationData?.items?.length ? <div className="alert">你还没有提交项目申请。</div> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AdminHome({ summary, pendingProjects, chainRecords, error }) {
+  const pendingCount = pendingProjects?.pagination?.total ?? 0;
+  const failedCount = chainRecords?.items?.filter((item) => item.status !== "success").length ?? 0;
+
+  return (
+    <div className="page-grid">
+      <WorkspaceIntro
+        eyebrow="Admin Workspace"
+        title="你是管理员，首页只保留后台待处理事项。"
+        description="管理员首页保持列表式信息架构，避免视觉噪音。"
+      >
+        <div className="summary-list">
+          <div><span>待审核项目</span><strong>{pendingCount}</strong></div>
+          <div><span>项目总数</span><strong>{summary?.project_count ?? "--"}</strong></div>
+          <div><span>失败链记录</span><strong>{failedCount}</strong></div>
+          <div><span>总拨付额</span><strong>{formatMoney(summary?.total_disbursed ?? 0)}</strong></div>
+        </div>
+      </WorkspaceIntro>
+
+      {error ? <div className="alert error">{error}</div> : null}
+
+      <section className="panel">
+        <div className="section-head">
+          <h3>后台模块</h3>
+        </div>
+        <NavList
+          items={[
+            { title: "项目审核", description: "优先处理申请者提交的待审核项目。", to: "/admin/projects", label: "进入项目审核" },
+            { title: "资金拨付", description: "单独登记和管理项目拨付。", to: "/admin/disbursements", label: "进入资金拨付" },
+            { title: "链记录管理", description: "查看失败记录并执行重试。", to: "/admin/chain-records", label: "进入链记录管理" },
+            { title: "操作日志", description: "查看后台操作轨迹和审计记录。", to: "/admin/logs", label: "进入操作日志" }
+          ]}
+        />
+      </section>
+    </div>
+  );
+}
+
+export default function HomePage() {
+  const { user, loading } = useAuth();
+  const [summary, setSummary] = useState(null);
+  const [myDonationData, setMyDonationData] = useState(null);
+  const [applicationData, setApplicationData] = useState(null);
+  const [pendingProjects, setPendingProjects] = useState(null);
+  const [chainRecords, setChainRecords] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setError("");
+    if (loading) return;
+
+    if (!user) {
+      apiFetch("/api/chain/summary").then(setSummary).catch((err) => setError(err.message));
+      return;
+    }
+
+    if (user.role === "admin") {
+      Promise.all([
+        apiFetch("/api/chain/summary"),
+        apiFetch("/api/projects/admin/list?page=1&pageSize=6&approvalStatus=pending"),
+        apiFetch("/api/chain/records?page=1&pageSize=10")
+      ])
+        .then(([summaryData, pendingData, chainData]) => {
+          setSummary(summaryData);
+          setPendingProjects(pendingData);
+          setChainRecords(chainData);
+        })
+        .catch((err) => setError(err.message));
+      return;
+    }
+
+    if (user.role === "applicant") {
+      apiFetch("/api/projects/my-applications?page=1&pageSize=6").then(setApplicationData).catch((err) => setError(err.message));
+      return;
+    }
+
+    Promise.all([apiFetch("/api/chain/summary"), apiFetch("/api/donations/my?page=1&pageSize=6")])
+      .then(([summaryData, donationData]) => {
+        setSummary(summaryData);
+        setMyDonationData(donationData);
+      })
+      .catch((err) => setError(err.message));
+  }, [user, loading]);
+
+  if (loading) {
+    return <section className="panel">正在加载首页...</section>;
+  }
+
+  if (!user) return <GuestHome summary={summary} error={error} />;
+  if (user.role === "admin") return <AdminHome summary={summary} pendingProjects={pendingProjects} chainRecords={chainRecords} error={error} />;
+  if (user.role === "applicant") return <ApplicantHome applicationData={applicationData} error={error} />;
+  return <DonorHome summary={summary} myDonationData={myDonationData} error={error} />;
 }

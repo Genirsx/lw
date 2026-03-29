@@ -1,7 +1,7 @@
 const env = require("../config/env");
 
 function buildExplorerTxUrl(txHash) {
-  if (!txHash || !env.chainExplorerUrl) {
+  if (env.chainMode !== "sepolia" || !txHash || !env.chainExplorerUrl) {
     return null;
   }
 
@@ -14,7 +14,7 @@ function getPublicChainConfig() {
     chainName: env.chainName,
     chainId: env.chainId,
     chainCurrencySymbol: env.chainCurrencySymbol,
-    explorerBaseUrl: env.chainExplorerUrl,
+    explorerBaseUrl: env.chainMode === "sepolia" ? env.chainExplorerUrl : null,
     contractAddress: env.contractAddress || null
   };
 }

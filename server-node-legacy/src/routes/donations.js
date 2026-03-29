@@ -249,7 +249,7 @@ router.get(
     });
 
     const calculatedOk = verifyHash(payload, donation.record_hash);
-    let onChainHash = chainRecord ? chainRecord.record_hash : null;
+    let onChainHash = env.chainMode === "mock" && chainRecord ? chainRecord.record_hash : null;
 
     if (env.chainMode !== "mock" && donation.chain_status === "success") {
       try {
