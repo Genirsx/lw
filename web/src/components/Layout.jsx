@@ -51,7 +51,7 @@ export default function Layout() {
       <aside className="app-sidebar">
         <div className="app-brand">
           <div className="eyebrow">Charity Chain System</div>
-          <h1>慈善捐赠上链存证系统</h1>
+          <h1>基于区块链的慈善公益管理系统</h1>
           <p>{user ? `${user.username} / ${roleLabel}` : "未登录用户"}</p>
         </div>
 
