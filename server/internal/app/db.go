@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 )
 
 type App struct {
@@ -18,19 +19,24 @@ type App struct {
 }
 
 func openDB(cfg Config) (*sql.DB, error) {
-	if cfg.DBClient != "sqlite" {
-		return nil, fmt.Errorf("当前 Go 版本仅实现 sqlite，收到 DB_CLIENT=%s", cfg.DBClient)
+	if cfg.DBClient != "mysql" {
+		return nil, fmt.Errorf("当前 Go 版本仅实现 mysql，收到 DB_CLIENT=%s", cfg.DBClient)
 	}
-	db, err := sql.Open("sqlite3", cfg.resolvedDBPath())
+	if err := ensureMySQLDatabase(cfg); err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("mysql", cfg.mysqlDSN(cfg.MySQLDatabase))
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	if err := ensureSQLiteMigrations(db); err != nil {
+	if err := ensureMySQLSchema(db, cfg); err != nil {
 		return nil, err
 	}
 	if err := ensureDemoUsers(db); err != nil {
@@ -39,28 +45,184 @@ func openDB(cfg Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func ensureSQLiteMigrations(db *sql.DB) error {
+func (c Config) mysqlDSN(dbName string) string {
+	driverCfg := mysqlDriver.NewConfig()
+	driverCfg.User = c.MySQLUser
+	driverCfg.Passwd = c.MySQLPassword
+	driverCfg.Net = "tcp"
+	driverCfg.Addr = fmt.Sprintf("%s:%d", c.MySQLHost, c.MySQLPort)
+	driverCfg.DBName = dbName
+	driverCfg.ParseTime = true
+	driverCfg.Collation = "utf8mb4_unicode_ci"
+	driverCfg.Timeout = 5 * time.Second
+	driverCfg.ReadTimeout = 5 * time.Second
+	driverCfg.WriteTimeout = 5 * time.Second
+	driverCfg.Params = map[string]string{
+		"charset": "utf8mb4",
+	}
+	return driverCfg.FormatDSN()
+}
+
+func ensureMySQLDatabase(cfg Config) error {
+	rootDB, err := sql.Open("mysql", cfg.mysqlDSN(""))
+	if err != nil {
+		return err
+	}
+	defer rootDB.Close()
+
+	if err := rootDB.Ping(); err != nil {
+		return err
+	}
+
+	_, err = rootDB.Exec("CREATE DATABASE IF NOT EXISTS " + mysqlIdentifier(cfg.MySQLDatabase) + " DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+	return err
+}
+
+func ensureMySQLSchema(db *sql.DB, cfg Config) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			username VARCHAR(64) NOT NULL UNIQUE,
+			email VARCHAR(128) NOT NULL UNIQUE,
+			password_hash VARCHAR(255) NOT NULL,
+			role VARCHAR(32) NOT NULL DEFAULT 'user',
+			created_at VARCHAR(32) NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS projects (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			name VARCHAR(128) NOT NULL,
+			description TEXT NOT NULL,
+			target_amount BIGINT NOT NULL,
+			raised_amount BIGINT NOT NULL DEFAULT 0,
+			disbursed_amount BIGINT NOT NULL DEFAULT 0,
+			image_url TEXT NULL,
+			start_time VARCHAR(32) NOT NULL,
+			end_time VARCHAR(32) NOT NULL,
+			status VARCHAR(32) NOT NULL DEFAULT 'draft',
+			chain_hash VARCHAR(66) NULL,
+			chain_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+			chain_tx_hash VARCHAR(66) NULL,
+			chain_block_number BIGINT NULL,
+			created_at VARCHAR(32) NOT NULL,
+			updated_at VARCHAR(32) NOT NULL,
+			creator_user_id BIGINT NULL,
+			approval_status VARCHAR(32) NOT NULL DEFAULT 'approved',
+			submitted_at VARCHAR(32) NULL,
+			approved_at VARCHAR(32) NULL,
+			approved_by_user_id BIGINT NULL,
+			review_note TEXT NULL,
+			CONSTRAINT fk_project_creator FOREIGN KEY (creator_user_id) REFERENCES users(id),
+			CONSTRAINT fk_project_approver FOREIGN KEY (approved_by_user_id) REFERENCES users(id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS donations (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			project_id BIGINT NOT NULL,
+			user_id BIGINT NULL,
+			donor_name VARCHAR(128) NOT NULL,
+			is_anonymous TINYINT(1) NOT NULL DEFAULT 0,
+			amount BIGINT NOT NULL,
+			message TEXT NULL,
+			donated_at VARCHAR(32) NOT NULL,
+			record_hash VARCHAR(66) NULL,
+			chain_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+			tx_hash VARCHAR(66) NULL,
+			block_number BIGINT NULL,
+			chain_recorded_at VARCHAR(32) NULL,
+			created_at VARCHAR(32) NOT NULL,
+			CONSTRAINT fk_donation_project FOREIGN KEY (project_id) REFERENCES projects(id),
+			CONSTRAINT fk_donation_user FOREIGN KEY (user_id) REFERENCES users(id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS disbursements (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			project_id BIGINT NOT NULL,
+			amount BIGINT NOT NULL,
+			receiver VARCHAR(128) NOT NULL,
+			purpose VARCHAR(128) NOT NULL,
+			description TEXT NULL,
+			occurred_at VARCHAR(32) NOT NULL,
+			record_hash VARCHAR(66) NULL,
+			chain_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+			tx_hash VARCHAR(66) NULL,
+			block_number BIGINT NULL,
+			chain_recorded_at VARCHAR(32) NULL,
+			created_at VARCHAR(32) NOT NULL,
+			CONSTRAINT fk_disbursement_project FOREIGN KEY (project_id) REFERENCES projects(id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS chain_records (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			business_type VARCHAR(32) NOT NULL,
+			business_id BIGINT NOT NULL,
+			record_hash VARCHAR(66) NOT NULL,
+			tx_hash VARCHAR(66) NULL,
+			block_number BIGINT NULL,
+			status VARCHAR(32) NOT NULL,
+			payload_json LONGTEXT NOT NULL,
+			created_at VARCHAR(32) NOT NULL,
+			updated_at VARCHAR(32) NOT NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS operation_logs (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			user_id BIGINT NOT NULL,
+			username VARCHAR(64) NOT NULL,
+			action VARCHAR(64) NOT NULL,
+			business_type VARCHAR(32) NOT NULL,
+			business_id BIGINT NOT NULL,
+			detail_json LONGTEXT NOT NULL,
+			created_at VARCHAR(32) NOT NULL,
+			CONSTRAINT fk_operation_user FOREIGN KEY (user_id) REFERENCES users(id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	}
+
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+
+	indexes := []struct {
+		table   string
+		name    string
+		columns string
+	}{
+		{"projects", "idx_projects_status", "status"},
+		{"projects", "idx_projects_approval_status", "approval_status"},
+		{"projects", "idx_projects_creator_user_id", "creator_user_id"},
+		{"donations", "idx_donations_project_id", "project_id"},
+		{"donations", "idx_donations_user_id", "user_id"},
+		{"donations", "idx_donations_donated_at", "donated_at"},
+		{"disbursements", "idx_disbursements_project_id", "project_id"},
+		{"disbursements", "idx_disbursements_occurred_at", "occurred_at"},
+		{"chain_records", "idx_chain_records_lookup", "business_type, business_id"},
+		{"chain_records", "idx_chain_records_tx_hash", "tx_hash"},
+		{"operation_logs", "idx_operation_logs_created_at", "created_at"},
+	}
+	for _, index := range indexes {
+		if err := ensureMySQLIndex(db, cfg.MySQLDatabase, index.table, index.name, index.columns); err != nil {
+			return err
+		}
+	}
+
 	migrations := []struct {
 		table      string
 		column     string
 		definition string
 		backfill   string
 	}{
-		{"projects", "creator_user_id", "INTEGER", ""},
-		{"projects", "approval_status", "TEXT NOT NULL DEFAULT 'approved'", "UPDATE projects SET approval_status = 'approved' WHERE approval_status IS NULL OR approval_status = ''"},
-		{"projects", "submitted_at", "TEXT", "UPDATE projects SET submitted_at = created_at WHERE submitted_at IS NULL"},
-		{"projects", "approved_at", "TEXT", ""},
-		{"projects", "approved_by_user_id", "INTEGER", ""},
-		{"projects", "review_note", "TEXT", ""},
+		{"projects", "creator_user_id", "BIGINT NULL", ""},
+		{"projects", "approval_status", "VARCHAR(32) NOT NULL DEFAULT 'approved'", "UPDATE projects SET approval_status = 'approved' WHERE approval_status IS NULL OR approval_status = ''"},
+		{"projects", "submitted_at", "VARCHAR(32) NULL", "UPDATE projects SET submitted_at = created_at WHERE submitted_at IS NULL"},
+		{"projects", "approved_at", "VARCHAR(32) NULL", ""},
+		{"projects", "approved_by_user_id", "BIGINT NULL", ""},
+		{"projects", "review_note", "TEXT NULL", ""},
 	}
 
 	for _, migration := range migrations {
-		exists, err := sqliteColumnExists(db, migration.table, migration.column)
+		exists, err := mysqlColumnExists(db, cfg.MySQLDatabase, migration.table, migration.column)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", migration.table, migration.column, migration.definition)); err != nil {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", mysqlIdentifier(migration.table), mysqlIdentifier(migration.column), migration.definition)); err != nil {
 				return err
 			}
 		}
@@ -98,6 +260,8 @@ func ensureDemoUsers(db *sql.DB) error {
 		password string
 		role     string
 	}{
+		{"admin", "admin@example.com", "Admin123456", "admin"},
+		{"donor", "donor@example.com", "Donor123456", "user"},
 		{"applicant_demo", "applicant@example.com", "Applicant123456", "applicant"},
 	}
 
@@ -130,27 +294,36 @@ func ensureDemoUsers(db *sql.DB) error {
 	return nil
 }
 
-func sqliteColumnExists(db *sql.DB, table, column string) (bool, error) {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
+func mysqlColumnExists(db *sql.DB, databaseName, table, column string) (bool, error) {
+	var count int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?`,
+		databaseName,
+		table,
+		column,
+	).Scan(&count)
+	return count > 0, err
+}
 
-	for rows.Next() {
-		var cid int
-		var name, colType string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
+func mysqlIdentifier(value string) string {
+	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+}
+
+func ensureMySQLIndex(db *sql.DB, databaseName, table, indexName, columns string) error {
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ?`,
+		databaseName,
+		table,
+		indexName,
+	).Scan(&count); err != nil {
+		return err
 	}
-	return false, rows.Err()
+	if count > 0 {
+		return nil
+	}
+	_, err := db.Exec(fmt.Sprintf("CREATE INDEX %s ON %s (%s)", mysqlIdentifier(indexName), mysqlIdentifier(table), columns))
+	return err
 }
 
 func parseFlexibleTime(value string) (time.Time, error) {

@@ -14,6 +14,11 @@ type Config struct {
 	JWTSecret           string
 	DBClient            string
 	DBFile              string
+	MySQLHost           string
+	MySQLPort           int
+	MySQLUser           string
+	MySQLPassword       string
+	MySQLDatabase       string
 	ChainMode           string
 	ChainName           string
 	ChainID             int64
@@ -32,8 +37,13 @@ func loadConfig() Config {
 	cfg := Config{
 		Port:                getEnvInt("PORT", 4000),
 		JWTSecret:           getEnv("JWT_SECRET", "charity-demo-secret"),
-		DBClient:            strings.ToLower(getEnv("DB_CLIENT", "sqlite")),
-		DBFile:              getEnv("DB_FILE", "data/app.db"),
+		DBClient:            strings.ToLower(getEnv("DB_CLIENT", "mysql")),
+		DBFile:              getEnv("DB_FILE", "server/data/app.db"),
+		MySQLHost:           getEnv("MYSQL_HOST", "127.0.0.1"),
+		MySQLPort:           getEnvInt("MYSQL_PORT", 3306),
+		MySQLUser:           getEnv("MYSQL_USER", "root"),
+		MySQLPassword:       getEnv("MYSQL_PASSWORD", "123456"),
+		MySQLDatabase:       getEnv("MYSQL_DATABASE", "charity_chain"),
 		ChainMode:           strings.ToLower(getEnv("CHAIN_MODE", "mock")),
 		ChainName:           getEnv("CHAIN_NAME", "Ethereum Sepolia"),
 		ChainID:             getEnvInt64("CHAIN_ID", 11155111),
@@ -58,7 +68,18 @@ func (c Config) resolvedDBPath() string {
 	if filepath.IsAbs(c.DBFile) {
 		return c.DBFile
 	}
-	return filepath.Clean(c.DBFile)
+
+	cleaned := filepath.Clean(c.DBFile)
+	candidates := []string{
+		cleaned,
+		filepath.Join("..", cleaned),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return cleaned
 }
 
 func getEnv(key, fallback string) string {
